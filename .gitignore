@@ -1,0 +1,30 @@
+# --- SEGURIDAD (CRÍTICO - NUNCA SUBIR) ---
+google_credentials.json
+.env
+client_secrets.json
+credentials.json
+
+# --- ENTORNOS VIRTUALES Y CACHÉ PYTHON ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# --- SALIDAS GENERADAS Y ARCHIVOS PESADOS ---
+# Ignorar toda la carpeta donde se guardan los videos finales
+output/
+
+# Ignorar carpetas temporales si las creas
+temp/
+downloads/
+
+# Ignorar videos sueltos en la raíz (por si acaso)
+*.mp4
+*.mp3
+*.mov
+*.wav
+
+# --- SISTEMA OPERATIVO ---
+.DS_Store
+Thumbs.db

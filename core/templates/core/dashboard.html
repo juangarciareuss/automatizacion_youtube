@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Silent Factory Dashboard</title>
+    <style>
+        body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; text-align: center; }
+        .container { max-width: 600px; margin: 50px auto; padding: 20px; border: 1px solid #333; border-radius: 10px; background-color: #1e1e1e; }
+        h1 { color: #d4af37; } /* Dorado */
+        .btn-generate {
+            background-color: #d4af37; color: black; padding: 15px 30px; font-size: 1.2rem; border: none; 
+            border-radius: 5px; cursor: pointer; margin-top: 20px; font-weight: bold; width: 100%;
+        }
+        .btn-generate:hover { background-color: #b5952f; }
+        label { display: block; text-align: left; margin-top: 15px; color: #aaa; }
+        .success-box { margin-top: 20px; padding: 15px; background-color: #2e7d32; color: white; border-radius: 5px; }
+        
+        /* Estilos para los campos del formulario (aunque ya vienen del forms.py, esto asegura limpieza) */
+        input, select, textarea { width: 100%; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🏭 Silent Factory Control</h1>
+    
+    <form method="POST">
+        {% csrf_token %}
+        
+        <div>
+            {{ form.topic.label_tag }}
+            {{ form.topic }}
+        </div>
+
+        <div>
+            {{ form.voice_id.label_tag }}
+            {{ form.voice_id }}
+        </div>
+
+        <div>
+            {{ form.director_notes.label_tag }}
+            {{ form.director_notes }}
+        </div>
+
+        <button type="submit" class="btn-generate">
+            🚀 GENERAR ACTIVO
+        </button>
+    </form>
+
+    {% if video_url %}
+    <div class="success-box">
+        <h3>✅ ¡Video Generado Exitosamente!</h3>
+        <video width="100%" controls>
+            <source src="{{ video_url }}" type="video/mp4">
+            Tu navegador no soporta videos.
+        </video>
+        <p style="font-size: 0.8rem; margin-top: 10px;">Ruta: {{ video_url }}</p>
+    </div>
+    {% endif %}
+</div>
+
+</body>
+</html>
