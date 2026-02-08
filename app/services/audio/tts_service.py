@@ -1,69 +1,70 @@
 import os
 import asyncio
 import edge_tts
-import re  # <--- IMPORTANTE: Necesario para limpiar el texto
 from app.domain.models import Scene
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 class TTSService:
-    def __init__(self, download_path="output/temp_audio"):
+    def __init__(self, download_path: str = "output/temp_audio"):
         self.download_path = download_path
-        os.makedirs(download_path, exist_ok=True)
-        # Voces recomendadas para inglés (calidad documental):
-        # en-US-ChristopherNeural (Masculina, profunda)
-        # en-US-RogerNeural (Masculina, seria)
-        # en-US-AriaNeural (Femenina, profesional)
-        self.voice = "en-US-ChristopherNeural"
+        os.makedirs(self.download_path, exist_ok=True)
+        
+        # Voz por defecto (rápida y clara para Shorts)
+        self.voice = "en-US-ChristopherNeural" 
 
-    async def generate_audio(self, text: str, scene_id: int) -> str:
+    async def generate_audio(self, text: str, filename: str) -> str:
+        """Genera un archivo de audio MP3 usando Edge TTS."""
         try:
-            # --- LIMPIEZA AGRESIVA (NUEVO) ---
-            # 1. Elimina todo lo que esté entre corchetes: [SFX...], [Music...], [Action...]
-            clean_text = re.sub(r'\[.*?\]', '', text)
+            communicate = edge_tts.Communicate(text, self.voice)
+            file_path = os.path.join(self.download_path, filename)
             
-            # 2. Elimina todo lo que esté entre paréntesis (por si acaso): (whispering), (pause)
-            clean_text = re.sub(r'\(.*?\)', '', clean_text)
-            
-            # 3. Elimina espacios dobles que quedan al borrar
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-            # ---------------------------------
-
-            if not clean_text:
-                logger.warning(f"⚠️ La escena {scene_id} quedó vacía tras limpiar.")
-                return None
-
-            # Usamos self.voice que viene configurada desde el main
-            communicate = edge_tts.Communicate(clean_text, self.voice, rate="+15%")
-            
-            filename = f"audio_scene_{scene_id}.mp3"
-            filepath = os.path.join(self.download_path, filename)
-            
-            await communicate.save(filepath)
-            
-            logger.info(f"   🔊 Audio Escena {scene_id} generado (Limpio)")
-            return filepath
+            await communicate.save(file_path)
+            return file_path
         except Exception as e:
-            logger.error(f"❌ Error generando audio escena {scene_id}: {e}")
+            logger.error(f"❌ Error generando TTS: {e}")
             return None
 
-def run_tts_sync(tts_service: TTSService, scenes: list) -> dict:
-    """Helper para correr la función asíncrona desde el main síncrono"""
+# --- WRAPPER SÍNCRONO PARA USAR EN MAIN.PY ---
+def run_tts_sync(service: TTSService, scenes: list[Scene]) -> dict:
+    """
+    Ejecuta la generación de audio en un bucle de eventos (Sync -> Async).
+    Retorna un diccionario {scene_id: audio_path}
+    """
     audio_map = {}
     
-    # Parche para Windows (Loop de eventos)
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    for scene in scenes:
-        if scene.narration:
-            # Usamos el loop existente para ejecutar la tarea
-            path = loop.run_until_complete(tts_service.generate_audio(scene.narration, scene.id))
+    async def _process_batch():
+        tasks = []
+        for scene in scenes:
+            # --- CORRECCIÓN AQUÍ: Usamos narrative_text ---
+            if scene.narrative_text: 
+                filename = f"scene_{scene.id}.mp3"
+                # Creamos la tarea asíncrona
+                task = service.generate_audio(scene.narrative_text, filename)
+                tasks.append((scene.id, task))
+        
+        # Ejecutamos todas las tareas en paralelo
+        results = await asyncio.gather(*[t[1] for t in tasks])
+        
+        # Mapeamos resultados
+        for i, path in enumerate(results):
+            scene_id = tasks[i][0]
             if path:
-                audio_map[scene.id] = path
-                
-    return audio_map
+                audio_map[scene_id] = path
+                logger.info(f"✅ Audio generado: Escena {scene_id}")
+
+    try:
+        # Truco para correr Async dentro de Sync en scripts
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        loop.run_until_complete(_process_batch())
+        return audio_map
+
+    except Exception as e:
+        logger.error(f"❌ Fallo crítico en TTS Batch: {e}")
+        return None

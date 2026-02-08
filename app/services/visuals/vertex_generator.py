@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import random
 import vertexai
 from google.oauth2 import service_account
 from vertexai.preview.vision_models import ImageGenerationModel
@@ -10,14 +11,17 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 class VertexGenerator:
-    def __init__(self, download_path="output/temp_assets"):
+    def __init__(self, download_path="output/temp_assets", style_modifier="cinematic food photography, macro details, 8k, hyper-realistic"):
         self.download_path = download_path
+        self.style_modifier = style_modifier 
+        
+        # 1. CONSISTENCIA MATEMÁTICA (GLOBAL SEED)
+        self.global_seed = random.randint(1, 100000)
+        
         os.makedirs(download_path, exist_ok=True)
         
-        # --- ESTRATEGIA: FUERZA BRUTA ---
+        # --- AUTENTICACIÓN ---
         cred_filename = "google_credentials.json"
-        
-        # Buscamos en la carpeta actual (donde está main.py)
         root_dir = os.getcwd()
         cred_path = os.path.join(root_dir, cred_filename)
         
@@ -28,47 +32,66 @@ class VertexGenerator:
         logger.info(f"🔑 Usando llave: {cred_path}")
         
         try:
-            # 1. Cargar Credenciales como Objeto
             self.credentials = service_account.Credentials.from_service_account_file(cred_path)
-            
-            # 2. Leer Project ID
             with open(cred_path, "r") as f:
                 project_id = json.load(f).get("project_id")
 
-            # 3. Inicializar Vertex pasando credenciales EXPLÍCITAMENTE
             vertexai.init(
                 project=project_id, 
                 location="us-central1",
                 credentials=self.credentials 
             )
             
-            # --- CAMBIO CRÍTICO: MODELO ESTABLE ---
-            # Probamos con Imagen 2 (imagegeneration@006) que es a prueba de balas.
-            # Si esto funciona, es que Imagen 3 requiere un permiso extra en tu consola.
             self.model_name = "imagen-4.0-fast-generate-001" 
             self.model = ImageGenerationModel.from_pretrained(self.model_name)
             
-            logger.info(f"✅ Conectado a Vertex AI (Modelo: {self.model_name})")
+            logger.info(f"✅ Vertex Ready (Set Virtual Activo) | Modelo: {self.model_name}")
                 
         except Exception as e:
             logger.error(f"❌ Error fatal iniciando Vertex: {e}")
             raise e
 
-    def generate_asset(self, scene: Scene) -> str:
-        try:
-            if not scene.visual_description: return None
+    def _build_intelligent_prompt(self, scene: Scene, kitchen_set: dict, accumulated_context: list) -> str:
+        """Construye un prompt por capas para forzar la continuidad."""
+        action_description = getattr(scene, 'image_prompt', None) or getattr(scene, 'visual_description', None)
+        if not action_description:
+            return None
 
-            # Prompt ajustado para Imagen 2
-            prompt = f"{scene.visual_description}, cinematic lighting, 8k, photorealistic, 9:16 aspect ratio"
-            logger.info(f"🎨 Generando con {self.model_name} (Escena {scene.id})...")
+        # Set (Invariable)
+        set_desc = f"Setting: {kitchen_set['environment']}. Tools: {kitchen_set['tools']}."
+
+        # Memoria (Lo que ya pasó)
+        context_str = ""
+        if accumulated_context:
+            past_items = ", ".join(accumulated_context[-2:])
+            context_str = f" Visible in background/side: {past_items}."
+
+        # Ensamblaje Final
+        full_prompt = (
+            f"{self.style_modifier}. "
+            f"{set_desc}"
+            f"{context_str}"
+            f" Main Action Focus: {action_description}. "
+            f"Atmosphere: Moody, steam rising, glistening textures."
+        )
+        return full_prompt
+
+    def generate_asset(self, scene: Scene, prompt_override: str = None) -> str:
+        try:
+            final_prompt = prompt_override
+            if not final_prompt:
+                raw_desc = getattr(scene, 'image_prompt', None) or getattr(scene, 'visual_description', None)
+                if not raw_desc: return None
+                final_prompt = f"{raw_desc}, {self.style_modifier}, 9:16 aspect ratio"
+
+            logger.info(f"🎨 Generando Escena {scene.id}...")
             
             images = self.model.generate_images(
-                prompt=prompt,
+                prompt=final_prompt,
                 number_of_images=1,
                 aspect_ratio="9:16",
-                # Estos parámetros son más seguros para Imagen 2
                 safety_filter_level="block_some", 
-                person_generation="allow_adult"
+                person_generation="allow_adult",
             )
 
             filename = f"scene_{scene.id}.png"
@@ -81,16 +104,45 @@ class VertexGenerator:
             if "429" in str(e):
                 logger.warning("⏳ Vertex saturado. Esperando 60s...")
                 time.sleep(60)
-                return self.generate_asset(scene)
-            
+                return self.generate_asset(scene, prompt_override)
             logger.error(f"❌ Error generando imagen: {e}")
-            # Fallback vital: Si falla la IA, no rompemos el video, devolvemos None
             return None
 
     def fetch_assets(self, scenes: list) -> dict:
-        assets_map = {}
+        """El ORQUESTADOR CON MEMORIA."""
+        assets_map = {} # 1. Creamos la bolsa vacía
+        
+        # A. DEFINIR EL SET VIRTUAL
+        kitchen_set = {
+            "environment": "Dark rustic wooden countertop, natural window light from left, blurry dark background",
+            "tools": "Cast iron skillet, vintage silver knife, beige linen napkin"
+        }
+        
+        # B. MEMORIA DEL PROCESO
+        accumulated_context = [] 
+        
+        logger.info(f"🎬 Iniciando Secuencia con Set Virtual: {kitchen_set['environment']}")
+        
         for scene in scenes:
-            path = self.generate_asset(scene)
-            if path: assets_map[scene.id] = path
-            time.sleep(3) # Imagen 2 es más rápida, bajamos espera
+            smart_prompt = self._build_intelligent_prompt(scene, kitchen_set, accumulated_context)
+            
+            if smart_prompt:
+                path = self.generate_asset(scene, prompt_override=smart_prompt)
+                
+                # SI LA IMAGEN SE GENERÓ, LA GUARDAMOS EN LA BOLSA
+                if path: 
+                    assets_map[scene.id] = path
+                
+                # Actualizar Memoria (Vital para la consistencia)
+                output_state = getattr(scene, 'output_state', None)
+                if output_state:
+                    accumulated_context.append(output_state)
+                else:
+                    # Fallback si Gemini no dio output_state
+                    desc = getattr(scene, 'visual_description', "something")
+                    accumulated_context.append(f"prepared {desc[:20]}...")
+
+            time.sleep(1) 
+
+        # --- ESTA ES LA LÍNEA QUE FALTABA ---
         return assets_map
