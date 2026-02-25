@@ -1,8 +1,8 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Dict
 from enum import Enum
 
-# 1. Enums (Mantenemos tus estilos avanzados)
+# --- 1. ENUMS (El vocabulario) ---
 class VisualStyle(str, Enum):
     LUXURY_MINIMAL = "luxury_minimal"
     DARK_DOCUMENTARY = "dark_documentary"
@@ -11,56 +11,63 @@ class VisualStyle(str, Enum):
     FOOD_PORN_MACRO = "food_porn_macro" 
 
 class VideoOrientation(str, Enum):
-    PORTRAIT = "portrait"   # Shorts/Reels (9:16)
-    LANDSCAPE = "landscape" # YouTube Standard (16:9)
-    SQUARE = "square"       # LinkedIn/Insta Feed (1:1)
+    PORTRAIT = "portrait"   # 9:16
+    LANDSCAPE = "landscape" # 16:9 
+    SQUARE = "square"       # 1:1
 
 class AssetSource(str, Enum):
-    PEXELS = "pexels"
-    PIXABAY = "pixabay"
-    GOOGLE_IMAGES = "google_images" 
-    AI_GENERATED = "ai_generated" 
-    VERTEX_AI = "vertex_ai" 
-    YOUTUBE_CC = "youtube_cc" # Agregado por compatibilidad
+    VERTEX_AI = "vertex_ai"
+    STOCK = "stock"
+    LOCAL = "local_file"
 
-# 2. La Escena (CORREGIDA: Eliminamos alias para evitar confusiones)
-class Scene(BaseModel):
-    id: int = Field(..., description="Número secuencial de la escena")
+# --- 2. LA BIBLIA VISUAL (LA CLAVE DE LA CONSISTENCIA) ---
+class VisualBible(BaseModel):
+    """
+    Define el entorno inmutable y las herramientas disponibles.
+    Vertex AI usará esto como 'System Prompt' para cada imagen.
+    """
+    prop_inventory: str = Field(..., description="Inventario estricto de utensilios a usar. Ej: '1. Blue plastic mixing bowl. 2. Black cast-iron skillet.' NO describir comida aquí.")
+    surface: str = Field(..., description="La superficie donde ocurre todo. Ej: 'A polished white Carrara marble countertop'")
+    lighting: str = Field(..., description="El esquema de luz. Ej: 'Hard sunlight casting sharp shadows from the right side'")
+    background: str = Field(..., description="El fondo desenfocado. Ej: 'Blurred tropical patio with palm leaves'")
+    color_palette: str = Field(..., description="Colores dominantes. Ej: 'Mint green, ice white, and lime yellow'")
+# --- 3. LA ESCENA INTELIGENTE ---
+class VideoScene(BaseModel):
+    id: int = Field(..., description="Orden secuencial")
     
-    # --- CORRECCIÓN 1: Nombre directo ---
-    # Antes: narration (alias="narrative_text")
-    # Ahora: narrative_text (nombre real, compatible con main.py)
-    narrative_text: str = Field(..., description="Lo que dirá la voz en off")
-
-    # --- CORRECCIÓN 2: Nombre directo ---
-    # Antes: visual_description (alias="image_prompt")
-    # Ahora: image_prompt (nombre real, compatible con main.py)
-    image_prompt: str = Field(..., description="Prompt detallado para Vertex AI")
+    # Texto
+    narrative_text: str = Field(..., description="Guion que leerá la IA")
     
-    # --- CAMPOS OPCIONALES ---
-    visual_search_term: Optional[str] = Field(None, description="Keywords para stock")
+    # 🟢 NUEVO: Control de tiempo ASMR / Silencio Visual
+    asmr_pause: float = Field(default=0.0, description="Segundos de silencio al final de la narración para apreciar el hiperrealismo visual o ASMR.")
     
-    # El cerebro de la consistencia
-    output_state: Optional[str] = Field(None, description="Estado visual de los objetos al terminar la acción")
+    # Imagen: Ahora solo describe la ACCIÓN. El objeto viene de la Biblia.
+    action_prompt: str = Field(..., description="Solo la acción. Ej: 'Pouring rum into the glass'. NO describir el vaso aquí.")
+    
+    # Adaptabilidad
+    is_essential: bool = Field(default=True)
+    
+    # Contexto Visual (Memoria de estado)
+    output_state: Optional[str] = Field(None, description="Estado del objeto. Ej: 'Glass is half full'")
     
     # Configuración Técnica
-    visual_source: AssetSource = Field(default=AssetSource.VERTEX_AI, description="Fuente del asset")
-    duration_estimate: Optional[float] = Field(default=3.0, description="Duración estimada")
-    transition_effect: Optional[str] = Field(default="crossfade", description="Efecto de transición")
-    overlay_text: Optional[str] = None
+    visual_source: AssetSource = Field(default=AssetSource.VERTEX_AI)
+    duration_estimate: float = Field(default=3.0)
+    
+    # Post-producción
+    audio_path: Optional[str] = None
+    image_path: Optional[str] = None
 
-    class Config:
-        populate_by_name = True
-
-# 3. El Guion Maestro
+# --- 4. EL GUION MAESTRO ---
 class VideoScript(BaseModel):
     title: str
+    orientation: VideoOrientation = Field(default=VideoOrientation.LANDSCAPE)
     
-    description_youtube: Optional[str] = Field(default="", description="Descripción SEO")
-    tags: List[str] = Field(default_factory=list)
+    # 🟢 AQUÍ ESTÁ LA MAGIA: La Biblia Visual Global
+    visual_bible: VisualBible = Field(..., description="Definición estricta de objetos persistentes")
     
-    orientation: VideoOrientation = VideoOrientation.PORTRAIT
-    scenes: List[Scene]
+    scenes: List[VideoScene]
     
-    bg_music_keywords: Optional[str] = Field(default="lofi hip hop beat, relaxing cooking", description="Música de fondo")
-    voice_speed_factor: float = Field(default=1.1, description="Velocidad de voz (1.1 es bueno para Shorts)")
+    # Audio
+    bg_music_keywords: str = Field(default="lofi cooking jazz")
+    voice_speed_factor: float = Field(default=1.0)

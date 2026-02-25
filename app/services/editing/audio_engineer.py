@@ -9,7 +9,7 @@ logger = get_logger(__name__)
 class AudioEngineer:
     def __init__(self, config):
         self.config = config
-        # Rutas base asumidas
+        # Rutas base
         self.music_base_path = "assets/music"
         self.sfx_base_path = "assets/sfx"
 
@@ -27,6 +27,13 @@ class AudioEngineer:
         
         if not voice_audio:
             logger.warning("⚠️ El video no tiene audio base (voz).")
+            # Si no hay voz, retornamos el video tal cual para evitar crash, 
+            # aunque idealmente debería tener música al menos.
+            # Intentamos ponerle música si se puede:
+            bg_music = self._select_music_by_mood()
+            if bg_music:
+                bg_music = afx.audio_loop(bg_music, duration=video_clip.duration)
+                return video_clip.set_audio(bg_music)
             return video_clip
 
         final_audio_layers = [voice_audio]
@@ -34,26 +41,31 @@ class AudioEngineer:
         # 2. Música de Fondo (Background Music)
         bg_music = self._select_music_by_mood()
         if bg_music:
-            # Hacemos que la música dure lo mismo que el video (loop si es necesario)
-            bg_music = afx.audio_loop(bg_music, duration=video_clip.duration)
-            
-            # Aplicamos Ducking: Volumen bajo (0.10) para no tapar la voz
-            # Podrías hacerlo más complejo, pero volumen constante bajo suele funcionar mejor en YouTube
-            bg_music = bg_music.volumex(0.12) 
-            
-            final_audio_layers.insert(0, bg_music) # Poner al fondo
+            try:
+                # Hacemos que la música dure lo mismo que el video (loop si es necesario)
+                bg_music = afx.audio_loop(bg_music, duration=video_clip.duration)
+                
+                # Aplicamos Ducking: Volumen bajo (0.12) para no tapar la voz
+                bg_music = bg_music.volumex(0.12) 
+                
+                final_audio_layers.insert(0, bg_music) # Poner al fondo
+            except Exception as e:
+                logger.error(f"❌ Error procesando música de fondo: {e}")
 
         # 3. Insertar Efectos de Sonido (SFX)
-        sfx_clips = self._generate_sfx_clips(script, scene_clips)
-        if sfx_clips:
-            final_audio_layers.extend(sfx_clips)
+        try:
+            sfx_clips = self._generate_sfx_clips(script, scene_clips)
+            if sfx_clips:
+                final_audio_layers.extend(sfx_clips)
+        except Exception as e:
+            logger.error(f"❌ Error generando clips de SFX (saltando): {e}")
 
         # 4. Mezcla Final
         try:
             full_mix = CompositeAudioClip(final_audio_layers)
             return video_clip.set_audio(full_mix)
         except Exception as e:
-            logger.error(f"❌ Error en la mezcla de audio: {e}")
+            logger.error(f"❌ Error en la mezcla final de audio: {e}")
             return video_clip
 
     def _select_music_by_mood(self):
@@ -75,7 +87,11 @@ class AudioEngineer:
         full_path = os.path.join(mood_path, selected_song)
         logger.info(f"🎵 Música seleccionada: {selected_song}")
         
-        return AudioFileClip(full_path)
+        try:
+            return AudioFileClip(full_path)
+        except Exception as e:
+            logger.error(f"❌ Error cargando archivo de música {selected_song}: {e}")
+            return None
 
     def _generate_sfx_clips(self, script, scene_clips):
         """
@@ -86,12 +102,15 @@ class AudioEngineer:
         current_time_cursor = 0.0
         
         try:
-            # Iteramos escena por escena para mantener la sincronía
             for i, scene in enumerate(script.scenes):
                 if i >= len(scene_clips): break
                 
+                # Obtenemos duración real del clip montado
                 scene_duration = scene_clips[i].duration
-                text = scene.narration or ""
+                
+                # 🟢 FIX CRÍTICO: Usamos getattr para evitar el crash si cambia el nombre del atributo
+                # Intentamos 'narrative_text' (Gemini), luego 'narration' (Legacy), luego vacío
+                text = getattr(scene, 'narrative_text', None) or getattr(scene, 'narration', None) or ""
                 
                 # Buscamos todas las etiquetas [SFX: loquesea]
                 matches = re.finditer(r'\[SFX:\s*(.*?)\]', text, re.IGNORECASE)
@@ -101,8 +120,7 @@ class AudioEngineer:
                 for match in matches:
                     sfx_name = match.group(1).strip().lower()
                     
-                    # Calcular posición temporal
-                    # Si el tag está al 50% del texto, el sonido va al 50% del clip
+                    # Calcular posición temporal relativa al texto
                     char_index = match.start()
                     percentage = char_index / max(total_chars, 1)
                     sfx_start_time = current_time_cursor + (percentage * scene_duration)
@@ -110,24 +128,27 @@ class AudioEngineer:
                     # Cargar el archivo de sonido
                     sfx_path = os.path.join(self.sfx_base_path, f"{sfx_name}.wav")
                     
-                    # Intentar .mp3 si no existe .wav
+                    # Fallback a mp3
                     if not os.path.exists(sfx_path):
                         sfx_path = os.path.join(self.sfx_base_path, f"{sfx_name}.mp3")
                     
                     if os.path.exists(sfx_path):
-                        clip = AudioFileClip(sfx_path).set_start(sfx_start_time)
-                        # Ajuste de volumen para SFX
-                        clip = clip.volumex(0.8) 
-                        sfx_objects.append(clip)
-                        logger.info(f"🔊 SFX insertado: {sfx_name} en {sfx_start_time:.2f}s")
+                        try:
+                            clip = AudioFileClip(sfx_path).set_start(sfx_start_time)
+                            clip = clip.volumex(0.8) # Volumen SFX
+                            sfx_objects.append(clip)
+                            logger.info(f"🔊 SFX insertado: {sfx_name} en {sfx_start_time:.2f}s")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Error cargando SFX {sfx_name}: {e}")
                     else:
-                        logger.warning(f"⚠️ SFX faltante: {sfx_name} (buscado en {self.sfx_base_path})")
+                        # Solo logueamos debug/warning para no ensuciar tanto si no hay SFX
+                        pass 
 
-                # Avanzamos el cursor de tiempo (restando el padding usado en timeline_builder si lo hubiera)
-                # Asumimos que scene_clips[i] es la duración real en el montaje
-                current_time_cursor += (scene_duration - 0.8) # El padding negativo del concatenate
+                # Avanzamos el cursor de tiempo (restando padding si existiera en timeline_builder)
+                # Padding standard en concatenate es -0.8s
+                current_time_cursor += (scene_duration - 0.8)
 
         except Exception as e:
-            logger.error(f"❌ Error procesando SFX: {e}")
+            logger.error(f"❌ Error general procesando SFX: {e}")
             
         return sfx_objects

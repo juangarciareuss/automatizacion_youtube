@@ -1,0 +1,7 @@
+google-genai
+moviepy
+pydantic
+python-dotenv
+playwright
+edge-tts>=6.1.9
+nest_asyncio>=1.5.8
